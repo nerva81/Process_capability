@@ -1,0 +1,10 @@
+runtime: python312
+
+entrypoint: streamlit run Home.py --server.port=$PORT --server.address=0.0.0.0
+
+env_variables:
+  STREAMLIT_SERVER_HEADLESS: "true"
+
+automatic_scaling:
+  max_instances: 2
+  min_instances: 0
