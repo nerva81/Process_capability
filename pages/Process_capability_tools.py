@@ -154,7 +154,7 @@ def compute_capability_indices(
 
 def plot_histogram_with_specs(x, LSL, USL, title, xlabel):
     fig, ax = plt.subplots()
-    ax.hist(x, bins="auto", alpha=0.7)
+    ax.hist(x, bins="auto", alpha=0.7, edgecolor='black')
     if LSL is not None:
         ax.axvline(LSL, linestyle="--", label="LSL")
     if USL is not None:
