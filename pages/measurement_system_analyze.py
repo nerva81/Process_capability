@@ -131,6 +131,11 @@ def render_type1_bias_repeatability(df: pd.DataFrame):
 # ==========================
 
 
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import streamlit as st
+
 def render_type2_variable(df: pd.DataFrame, method: str):
     if method == "ANOVA":
         st.header("Type 2 – Variable Gage R&R (ANOVA)")
@@ -148,7 +153,11 @@ def render_type2_variable(df: pd.DataFrame, method: str):
         st.warning("No valid numeric data after cleaning.")
         return
 
-    tolerance = st.number_input("Tolerance (USL - LSL)", value=float(data["Measurement"].std() * 10), min_value=0.0)
+    tolerance = st.number_input(
+        "Tolerance (USL - LSL) (Optional)",
+        value=float(data["Measurement"].std() * 10),
+        min_value=0.0,
+    )
 
     if method == "ANOVA":
         results = compute_grr_anova_core(data, tol=tolerance)
@@ -159,38 +168,187 @@ def render_type2_variable(df: pd.DataFrame, method: str):
             st.error(str(e))
             return
 
-    st.subheader("Variance components")
+    # ===================== ANOVA-specifické části =====================
+    if method == "ANOVA":
+        st.subheader("Two-way ANOVA table (with interaction)")
+
+        if "anova_with_int" in results:
+            st.dataframe(
+                results["anova_with_int"].style.format(
+                    {
+                        "sum_sq": "{:.5g}",
+                        "df": "{:.0f}",
+                        "MS": "{:.5g}",
+                        "F": "{:.3f}",
+                        "PR(>F)": "{:.3f}",
+                    }
+                )
+            )
+        else:
+            st.info("Full ANOVA table with interaction is not available in results.")
+
+        st.write("---")
+
+        # ANOVA tabulka pro model, který byl použit pro výpočet variancí
+        use_interaction = results.get("use_interaction", True)
+        title_used = (
+            "Two-way ANOVA table (used model – with interaction)"
+            if use_interaction
+            else "Two-way ANOVA table (used model – without interaction)"
+        )
+        st.subheader(title_used)
+
+        if "anova_used" in results:
+            st.dataframe(
+                results["anova_used"].style.format(
+                    {
+                        "sum_sq": "{:.5g}",
+                        "df": "{:.0f}",
+                        "MS": "{:.5g}",
+                        "F": "{:.3f}",
+                        "PR(>F)": "{:.3f}",
+                    }
+                )
+            )
+        else:
+            st.info("ANOVA table of the used model is not available in results.")
+
+        st.write("---")
+
+    # ===================== Variance components =====================
+
+    st.subheader("Gage R&R – variance components")
+
+    # Předpokládáme, že backend vrací variance; pokud ne, dopočítáme z SD
+    var_EV = results.get("var_EV", results["EV"] ** 2)
+    var_Reprod = results.get("var_Reprod", results["Reprod"] ** 2)
+    var_GRR = results.get("var_GRR", results["GRR"] ** 2)
+    var_PV = results.get("var_PV", results["PV"] ** 2)
+    var_TV = results.get("var_TV", results["TV"] ** 2)
+    var_Operator = results.get("var_Operator", None)
+
+    sources = []
+    var_list = []
+    sd_list = []
+
+    # R&R total
+    sources.append("R&R (total)")
+    var_list.append(var_GRR)
+    sd_list.append(results["GRR"])
+
+    # Repeatability
+    sources.append("Repeatability")
+    var_list.append(var_EV)
+    sd_list.append(results["EV"])
+
+    # Reproducibility
+    sources.append("Reproducibility")
+    var_list.append(var_Reprod)
+    sd_list.append(results["Reprod"])
+
+    # Optional: Operator jako pod-řádek Reproducibility
+    if var_Operator is not None:
+        sources.append("  Operator")
+        var_list.append(var_Operator)
+        sd_list.append(np.sqrt(var_Operator))
+
+    # Part-to-part
+    sources.append("Part-to-part")
+    var_list.append(var_PV)
+    sd_list.append(results["PV"])
+
+    # Total
+    sources.append("Total variation")
+    var_list.append(var_TV)
+    sd_list.append(results["TV"])
+
+    var_total_for_contrib = var_TV if var_TV > 0 else np.nan
+    contrib_pct = [
+        (v / var_total_for_contrib * 100.0) if var_total_for_contrib > 0 else np.nan
+        for v in var_list
+    ]
+    six_sigma = [6.0 * s for s in sd_list]
+
+    varcomp_df = pd.DataFrame(
+        {
+            "Source": sources,
+            "VarComp": var_list,
+            "%Contribution": contrib_pct,
+            "Std dev": sd_list,
+            "6 * Std dev": six_sigma,
+        }
+    )
+
+    st.dataframe(
+        varcomp_df.style.format(
+            {
+                "VarComp": "{:.5g}",
+                "%Contribution": "{:.2f}",
+                "Std dev": "{:.5g}",
+                "6 * Std dev": "{:.5g}",
+            }
+        )
+    )
+
+    # ===================== Study variation tabulka (Std dev + %SV + %Tol) =====================
+
+    st.subheader("Study variation (Std dev, 6 * Std dev, %Study variation, %Tolerance)")
 
     comp_df = pd.DataFrame(
         {
-            "Component": ["Repeatability (EV)", "Reproducibility", "Gage R&R", "Part-to-part", "Total"],
+            "Source": ["R&R (total)", "Repeatability", "Reproducibility", "Part-to-part", "Total variation"],
             "Std dev": [
+                results["GRR"],
                 results["EV"],
                 results["Reprod"],
-                results["GRR"],
                 results["PV"],
                 results["TV"],
             ],
+            "6 * Std dev": [
+                6 * results["GRR"],
+                6 * results["EV"],
+                6 * results["Reprod"],
+                6 * results["PV"],
+                6 * results["TV"],
+            ],
             "%Study variation": [
+                results["%SV_GRR"],
                 results["%SV_EV"],
                 results["%SV_Reprod"],
-                results["%SV_GRR"],
                 results["%SV_PV"],
                 results["%SV_TV"],
             ],
             "%Tolerance": [
+                results["%Tol_GRR"],
                 results["%Tol_EV"],
                 results["%Tol_Reprod"],
-                results["%Tol_GRR"],
                 results["%Tol_PV"],
                 results["%Tol_TV"],
             ],
         }
     )
 
-    st.dataframe(comp_df.style.format({"Std dev": "{:.5g}", "%Study variation": "{:.1f}", "%Tolerance": "{:.1f}"}))
+    st.dataframe(
+        comp_df.style.format(
+            {
+                "Std dev": "{:.5g}",
+                "6 * Std dev": "{:.5g}",
+                "%Study variation": "{:.2f}",
+                "%Tolerance": "{:.2f}",
+            }
+        )
+    )
 
-    st.metric("Number of distinct categories (ndc)", f"{results['ndc']:.1f}" if not np.isnan(results["ndc"]) else "N/A")
+    # ===================== ndc =====================
+
+    st.metric(
+        "%GRR",
+        f"{results['%SV_GRR']:.2f}" if not np.isnan(results["ndc"]) else "N/A",
+    )
+    st.metric(
+        "Number of distinct categories (ndc)",
+        f"{results['ndc']:.2f}" if not np.isnan(results["ndc"]) else "N/A",
+    )
 
     st.write("---")
     st.subheader("Boxplots by part and operator")
@@ -213,10 +371,9 @@ def render_type2_variable(df: pd.DataFrame, method: str):
         ax.set_ylabel("Measurement")
         plt.suptitle("")
         st.pyplot(fig)
-
     st.info(
-        "Typical acceptance criteria: %GRR (of study variation) ≤ 30% and ndc ≥ 5. "
-        "But always check context of your process."
+        "Typical acceptance criteria: %GRR (of study variation) ≤ 10% and ndc ≥ 5. \n%GRR between 10 and 30% and ndc ≥ 5 could be applicable in come cases. \nOther cases are unacceptable. "
+        "\n But always check context of your process."
     )
 
 
